@@ -19,7 +19,11 @@ exports.scrapeUrl = async (req, res) => {
         const metaDescription = await page.$eval('meta[name="description"]', el => el.content).catch(() => 'No description available');
 
         // Scrape all links
-        const links = await page.$$eval('a', anchors => anchors.map(anchor => anchor.href));
+        let links = await page.$$eval('a', anchors => anchors.map(anchor => anchor.href));
+
+        // Remove duplicate links and the current link
+        links = [...new Set(links)]; // Remove duplicates
+        links = links.filter(link => link !== url && link); // Remove current URL and empty links
 
         // Scrape the main text content (unrefined)
         const pageText = await page.evaluate(() => document.body.innerText);
