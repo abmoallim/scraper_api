@@ -1,10 +1,11 @@
 const puppeteer = require('puppeteer');
+const ScrapedData = require('../models/ScrapedData');
 
 exports.scrapeUrl = async (req, res) => {
-    const { url } = req.body;
+    const { url, userId } = req.body;  // Include userId in the request body
 
-    if (!url) {
-        return res.status(400).json({ error: 'URL is required' });
+    if (!url || !userId) {
+        return res.status(400).json({ error: 'URL and userId are required' });
     }
 
     try {
@@ -12,51 +13,59 @@ exports.scrapeUrl = async (req, res) => {
         const page = await browser.newPage();
         await page.goto(url, { waitUntil: 'load', timeout: 0 });
 
-        // Scrape the page title
         const pageTitle = await page.title();
-
-        // Scrape the meta description
         const metaDescription = await page.$eval('meta[name="description"]', el => el.content).catch(() => 'No description available');
-
-        // Scrape all links
+        
         let links = await page.$$eval('a', anchors => anchors.map(anchor => anchor.href));
+        links = [...new Set(links)];
+        links = links.filter(link => link !== url && link);
 
-        // Remove duplicate links and the current link
-        links = [...new Set(links)]; // Remove duplicates
-        links = links.filter(link => link !== url && link); // Remove current URL and empty links
-
-        // Scrape the main text content (unrefined)
         const pageText = await page.evaluate(() => document.body.innerText);
-
-        // Refine text by extracting content from specific elements
         const refinedText = await page.evaluate(() => {
             const headers = Array.from(document.querySelectorAll('h1, h2, h3')).map(header => header.innerText);
             const paragraphs = Array.from(document.querySelectorAll('p')).map(paragraph => paragraph.innerText);
             return {
-                headers: headers.join(' | '),   // Joining headers with a separator for better readability
-                paragraphs: paragraphs.join('\n\n'), // Keeping paragraphs separate for clarity
+                headers: headers.join(' | '),
+                paragraphs: paragraphs.join('\n\n'),
             };
         });
 
-        // Scrape all images
         const images = await page.$$eval('img', imgs => imgs.map(img => img.src));
 
         await browser.close();
 
-        // Return the scraped data in JSON format
+        // Save the scraped data to the database
+        const scrapedData = new ScrapedData({
+            userId,
+            url,
+            title: pageTitle,
+            description: metaDescription,
+            links,
+            text: pageText,
+            refined_text: refinedText,
+            images
+        });
+        
+        await scrapedData.save();
+
         return res.json({
             message: `Successfully accessed ${url}`,
-            data: {
-                title: pageTitle,
-                description: metaDescription,
-                links: links,
-                text: pageText,  // Unrefined full text content
-                refined_text: refinedText,  // Structured text content
-                images: images,
-            }
+            data: scrapedData
         });
     } catch (error) {
         console.error(error);
         return res.status(500).json({ error: 'Failed to scrape the URL' });
+    }
+};
+
+// Fetch all scraped data for a specific user
+exports.getScrapedDataByUser = async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const data = await ScrapedData.find({ userId });
+        res.json({ data });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: 'Failed to retrieve data' });
     }
 };
